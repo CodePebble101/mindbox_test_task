@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-app-deployment 
+spec:
+  replicas: 1
+  revisionHistoryLimit: 4 # не копим старые репликасеты - оптимизируем использование ресурсов
+  selector:
+    matchLabels:
+      app: nginx-app
+  template:
+    metadata:
+      labels:
+        app: nginx-app
+      annotations: # добавляю возможность мониторинга и логирования
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/data/metrics"
+    spec:
+      terminationGracePeriodSeconds: 20 # устанавливаем время для мягкого выключения пода
+      affinity:
+          podAntiAffinity: #Стараемся минимизировать количество под на одной ноде (повышаем отказоустойчивость) - если по какой-то причине умер одна нода, то будет потерян только один под
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      app: nginx-app
+                  topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints: # параметр, необходтмый для распределения нод по мультизональному кластеру
+        - maxSkew: 1 # при 3 зонах и 5 нодах укладываемся в единичный размер максимальной разницы в количестве нод на одну зону
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway # избегаем возможных проблем с DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: nginx-app
+      containers:
+        - name: nginx-app
+          image: nginx:1.28.0 # в качестве базового примера веб-приложения был выбран веб-сервер nginx 
+          ports:
+            - containerPort: 8080 
+          resources:
+            requests:
+              cpu: "200m"         # 0.2 CPU в качестве гарантированных ресурсов взято с небольшим запасом в соответствии с ТЗ
+              memory: "128Mi"     # приложение стабильно использует 128 MiB
+            limits:
+              cpu: "1000m"        # Максимум 1 CPU — для стартовых пиков
+              memory: "256Mi"     # немного запаса по памяти на время пиковой нагрузки
+          # Чтобы не было проблем при длительном запуске добавляю стартовую пробу, учитывающую указанную в ТЗ среднюю длительность инициализации
+          startupProbe:
+            httpGet:
+              path: /health-check
+              port: 8080
+            failureThreshold: 12   # 12 попыток в теории уменьшат вероятность false-negative результата в случае более длительной инициализации
+            periodSeconds: 1 
+          readinessProbe:
+            httpGet:
+              path: /health-check
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /health-check
+              port: 8080
+            initialDelaySeconds: 12 # аналогично со стартовой пробой даем немного больше времени до первой проверки на отсутствие зависаний пода
+            periodSeconds: 10
+          securityContext: # повышаем безопасность, запуская приложения не от лица рута
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+
+      
+

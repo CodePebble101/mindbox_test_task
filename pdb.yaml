@@ -1,0 +1,9 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget # внедряем его для уклонения от проблем при обновлении нод или масштабировании (мы же не хотим иметь дело со всеми мертвыми подами одновременно)
+metadata:
+  name: nginx-app-pdb
+spec:
+  minAvailable: 1 # при voluntary disruption хотя бы один под продолжит работать
+  selector:
+    matchLabels:
+      app: nginx-app
